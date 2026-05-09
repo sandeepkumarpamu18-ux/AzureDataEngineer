@@ -1,0 +1,99 @@
+{
+	"name": "Master_CopyAzureSQLTablesDeltaLake",
+	"properties": {
+		"description": "Copying tables from AzureSQL to Delta Lake using water mark model and loading with incremental or full.",
+		"activities": [
+			{
+				"name": "LookupTablesMetadata",
+				"type": "Lookup",
+				"dependsOn": [],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"source": {
+						"type": "AzureMySqlSource",
+						"query": "select * from AzureSQL_DeltaLake_Metadata where isactive = ‘Y’",
+						"queryTimeout": "00:02:00"
+					},
+					"dataset": {
+						"referenceName": "AzureSQLWithParameteres",
+						"type": "DatasetReference"
+					}
+				}
+			},
+			{
+				"name": "ForEachLoopMetadata",
+				"type": "ForEach",
+				"dependsOn": [
+					{
+						"activity": "LookupTablesMetadata",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"userProperties": [],
+				"typeProperties": {
+					"items": {
+						"value": "@activity('LookupTablesMetadata').output.value",
+						"type": "Expression"
+					},
+					"batchCount": 5,
+					"activities": [
+						{
+							"name": "PL_Copy_Generic_Table",
+							"type": "ExecutePipeline",
+							"dependsOn": [],
+							"policy": {
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"pipeline": {
+									"referenceName": "PL_Copy_Generic_Table",
+									"type": "PipelineReference"
+								},
+								"waitOnCompletion": true,
+								"parameters": {
+									"table_name": {
+										"value": "@item().table_name",
+										"type": "Expression"
+									},
+									"watermark_column": {
+										"value": "@item().watermark_column",
+										"type": "Expression"
+									},
+									"last_modified_date": {
+										"value": "@item().last_modified_date",
+										"type": "Expression"
+									},
+									"sink_folder": {
+										"value": "@item.sink_folder",
+										"type": "Expression"
+									},
+									"file_name": {
+										"value": "@concat(item().table_name,'_',utcNow(),'.parquet')",
+										"type": "Expression"
+									},
+									"typeofload": {
+										"value": "@item().typeofload",
+										"type": "Expression"
+									}
+								}
+							}
+						}
+					]
+				}
+			}
+		],
+		"annotations": [],
+		"lastPublishTime": "2026-04-19T07:54:29Z"
+	},
+	"type": "Microsoft.DataFactory/factories/pipelines"
+}

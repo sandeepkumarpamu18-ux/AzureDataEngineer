@@ -1,0 +1,58 @@
+{
+	"name": "Aggregate",
+	"properties": {
+		"type": "MappingDataFlow",
+		"typeProperties": {
+			"sources": [
+				{
+					"dataset": {
+						"referenceName": "nonparameterizedcsvdataset",
+						"type": "DatasetReference"
+					},
+					"name": "source1"
+				}
+			],
+			"sinks": [
+				{
+					"dataset": {
+						"referenceName": "NoParameterDatalakeJson",
+						"type": "DatasetReference"
+					},
+					"name": "StoresAcrossCityCountry"
+				}
+			],
+			"transformations": [
+				{
+					"name": "aggregate1"
+				},
+				{
+					"name": "sortbycitycountry"
+				}
+			],
+			"scriptLines": [
+				"source(output(",
+				"          store_id as string,",
+				"          store_name as string,",
+				"          city as string,",
+				"          country as string,",
+				"          store_type as string",
+				"     ),",
+				"     allowSchemaDrift: true,",
+				"     validateSchema: false,",
+				"     ignoreNoFilesFound: false) ~> source1",
+				"source1 aggregate(groupBy(city,",
+				"          country),",
+				"     NoOfStores = count(store_id)) ~> aggregate1",
+				"aggregate1 sort(asc(city, true),",
+				"     asc(country, true)) ~> sortbycitycountry",
+				"sortbycitycountry sink(allowSchemaDrift: true,",
+				"     validateSchema: false,",
+				"     umask: 0022,",
+				"     preCommands: [],",
+				"     postCommands: [],",
+				"     skipDuplicateMapInputs: true,",
+				"     skipDuplicateMapOutputs: true) ~> StoresAcrossCityCountry"
+			]
+		}
+	}
+}

@@ -1,0 +1,281 @@
+{
+	"name": "PL_Copy_Generic_Table",
+	"properties": {
+		"activities": [
+			{
+				"name": "GetMaxWaterMarkColumnValue",
+				"type": "Lookup",
+				"dependsOn": [],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"source": {
+						"type": "AzureMySqlSource",
+						"query": {
+							"value": "@concat(\n  'select max(', pipeline().parameters.watermark_column,\n  ') as max_last_modified_date from ',\n  pipeline().parameters.table_name\n)",
+							"type": "Expression"
+						},
+						"queryTimeout": "02:00:00"
+					},
+					"dataset": {
+						"referenceName": "AzureSQLWithParameteres",
+						"type": "DatasetReference"
+					}
+				}
+			},
+			{
+				"name": "StartLog",
+				"type": "SqlServerStoredProcedure",
+				"dependsOn": [
+					{
+						"activity": "GetMaxWaterMarkColumnValue",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"storedProcedureName": "sp_startLog",
+					"storedProcedureParameters": {
+						"pipe_runid": {
+							"value": {
+								"value": "@pipeline().RunId",
+								"type": "Expression"
+							},
+							"type": "Int32"
+						},
+						"pipe_name": {
+							"value": {
+								"value": "@pipeline().Pipeline",
+								"type": "Expression"
+							},
+							"type": "String"
+						},
+						"status": {
+							"value": "'InProgress'",
+							"type": "String"
+						},
+						"table_name": {
+							"value": {
+								"value": "@pipeline().parameters.table_name",
+								"type": "Expression"
+							},
+							"type": "String"
+						},
+						"start_time": {
+							"value": {
+								"value": "@utcNow()",
+								"type": "Expression"
+							},
+							"type": "String"
+						}
+					}
+				},
+				"linkedServiceName": {
+					"referenceName": "AzureSqlDatabasestore1",
+					"type": "LinkedServiceReference"
+				}
+			},
+			{
+				"name": "CopyAzureSQLDeltaLake",
+				"type": "Copy",
+				"dependsOn": [
+					{
+						"activity": "StartLog",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 2,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"source": {
+						"type": "AzureMySqlSource",
+						"query": {
+							"value": "@if(\n\t\t\t\t\tequals(pipeline().parameters.typeofload,'INCREMENT'),\n\t\t\t\t\tconcat(\n\t\t\t\t\t\t\t'select * from ', pipeline().parameters.table_name,\n\t\t\t\t\t\t\t' where ', pipeline().parameters.watermark_column, ' >= ''', pipeline().parameters.last_modified_date, '''',\n\t\t\t\t\t\t\t' and ', pipeline().parameters.watermark_column, ' <= ''',\n\t\t\t\t\t\t\tactivity('GetMaxWaterMarkColumnValue').output.firstRow.max_last_modified_date, ''''\n\t\t\t\t\t\t    ),\n\t\t\t\t\tconcat('select * from ', pipeline().parameters.table_name)\n\t\t\t\t)",
+							"type": "Expression"
+						},
+						"queryTimeout": "02:00:00"
+					},
+					"sink": {
+						"type": "ParquetSink",
+						"storeSettings": {
+							"type": "AzureBlobFSWriteSettings",
+							"copyBehavior": "FlattenHierarchy"
+						},
+						"formatSettings": {
+							"type": "ParquetWriteSettings"
+						}
+					},
+					"enableStaging": false,
+					"translator": {
+						"type": "TabularTranslator",
+						"typeConversion": true,
+						"typeConversionSettings": {
+							"allowDataTruncation": true,
+							"treatBooleanAsNumber": false
+						}
+					}
+				},
+				"inputs": [
+					{
+						"referenceName": "AzureSQLWithParameteres",
+						"type": "DatasetReference"
+					}
+				],
+				"outputs": [
+					{
+						"referenceName": "Parquetdatalake",
+						"type": "DatasetReference",
+						"parameters": {
+							"container": {
+								"value": "@pipeline().parameters.sink_folder",
+								"type": "Expression"
+							},
+							"folder": {
+								"value": "@pipeline().parameters.file_name",
+								"type": "Expression"
+							}
+						}
+					}
+				]
+			},
+			{
+				"name": "Stored procedure1",
+				"type": "SqlServerStoredProcedure",
+				"dependsOn": [
+					{
+						"activity": "CopyAzureSQLDeltaLake",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"storedProcedureName": "sp_endLog",
+					"storedProcedureParameters": {
+						"staus": {
+							"value": {
+								"value": "@if(\n  equals(activity('CopyAzureSQLDeltaLake').Status, 'Succeeded'),\n  'Completed',\n  'Failed'\n)",
+								"type": "Expression"
+							},
+							"type": "String"
+						},
+						"rowsCopied": {
+							"value": {
+								"value": "@if(\n  equals(activity('CopyAzureSQLDeltaLake').Status, 'Succeeded')\n  ,activity('CopyAzureSQLDeltaLake').output.rowsCopied\n  ,0\n)",
+								"type": "Expression"
+							},
+							"type": "Int64"
+						},
+						"rowsSkipped": {
+							"value": {
+								"value": "@if(\n  equals(activity('CopyAzureSQLDeltaLake').Status, 'Succeeded')\n  ,activity('CopyAzureSQLDeltaLake').output.rowsSkipped\n  ,0\n)",
+								"type": "Expression"
+							},
+							"type": "Int64"
+						},
+						"rowsRead": {
+							"value": {
+								"value": "@if(\n  \t\t\t\tequals(activity('CopyAzureSQLDeltaLake').Status, 'Succeeded')\n  \t\t\t\t,activity('CopyAzureSQLDeltaLake').output.rowsRead\n  \t\t\t\t,0\n\t\t\t\t\t\t\t\t    )",
+								"type": "Expression"
+							},
+							"type": "Int64"
+						},
+						"CopyRunTime": {
+							"value": {
+								"value": "@if(\n  \t\t\t\tequals(activity('CopyAzureSQLDeltaLake').Status, 'Succeeded')\n  \t\t\t\t,activity('CopyAzureSQLDeltaLake').output.copyDuration\n  \t\t\t\t,0\n\t\t\t\t\t\t\t\t    )",
+								"type": "Expression"
+							},
+							"type": "Datetime"
+						},
+						"error_msg": {
+							"value": {
+								"value": "@if(\n  \t\t\t\tequals(activity('CopyAzureSQLDeltaLake').Status, 'Succeeded')\n  \t\t\t\t,activity('CopyAzureSQLDeltaLake').output.error.message\n  \t\t\t\t,0\n\t\t\t\t)\t",
+								"type": "Expression"
+							},
+							"type": "String"
+						},
+						"end_time": {
+							"value": {
+								"value": "@utcNow()",
+								"type": "Expression"
+							},
+							"type": "String"
+						},
+						"max_last_modified_date": {
+							"value": {
+								"value": "@activity('GetMaxWaterMarkColumnValue').output.firstRow.max_last_modified_date",
+								"type": "Expression"
+							},
+							"type": "String"
+						},
+						"table_name": {
+							"value": {
+								"value": "@pipeline().parameters.table_name",
+								"type": "Expression"
+							},
+							"type": "String"
+						}
+					}
+				},
+				"linkedServiceName": {
+					"referenceName": "AzureSqlDatabasestore1",
+					"type": "LinkedServiceReference"
+				}
+			}
+		],
+		"parameters": {
+			"table_name": {
+				"type": "string"
+			},
+			"watermark_column": {
+				"type": "string"
+			},
+			"last_modified_date": {
+				"type": "string"
+			},
+			"sink_folder": {
+				"type": "string"
+			},
+			"file_name": {
+				"type": "string"
+			},
+			"typeofload": {
+				"type": "String"
+			}
+		},
+		"annotations": [],
+		"lastPublishTime": "2026-04-19T07:54:29Z"
+	},
+	"type": "Microsoft.DataFactory/factories/pipelines"
+}
